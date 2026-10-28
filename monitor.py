@@ -2,12 +2,13 @@
 """
 Monitor do streaming da Rádio Terra Nativa FM.
 
-A cada execução (o GitHub roda de 5 em 5 minutos):
-  1. conecta no streaming como um ouvinte e grava ~20 segundos;
-  2. confere se conectou, se o áudio chegou inteiro e se tem som (não só silêncio);
-  3. guarda a situação em estado.json;
-  4. avisa no Telegram quando a rádio cai (depois de 2 conferências seguidas com problema),
-     lembra de hora em hora enquanto continuar fora e avisa quando voltar.
+A cada execução (o GitHub roda de 5 em 5 minutos) faz 2 conferências, com uns 2 minutos e meio entre elas:
+  1. conecta no streaming como um ouvinte e ouve ~20 segundos (nada é salvo);
+  2. confere se conectou, se o áudio chegou inteiro, se chegou no ritmo certo (sem picotar)
+     e se tem som (não só silêncio);
+  3. se der problema, tenta de novo 15 segundos depois; confirmado, avisa no Telegram na hora;
+  4. lembra de hora em hora enquanto continuar fora e avisa quando voltar;
+  5. guarda a situação em estado.json.
 
 Configuração (no GitHub, em Settings > Secrets and variables > Actions):
   TELEGRAM_TOKEN    token do robô (do @BotFather)
@@ -25,7 +26,10 @@ TELEGRAM_API = os.environ.get('TELEGRAM_API', 'https://api.telegram.org')
 ARQ_ESTADO = os.environ.get('ARQ_ESTADO', 'estado.json')
 
 SEGUNDOS = 20            # quanto do streaming é gravado em cada conferência
-FALHAS_PARA_AVISAR = 2   # conferências seguidas com problema antes de avisar (evita alarme falso)
+FALHAS_PARA_AVISAR = 1   # cada conferência já confirma o problema com uma 2ª tentativa antes de contar
+INTERVALO_SEG = 150      # tempo entre as conferências da mesma execução
+CONFERENCIAS = 2         # conferências por execução
+LENTIDAO = 1.30          # levar 30% a mais que o tempo real para receber o áudio = picotando
 LEMBRETE_MIN = 60        # enquanto estiver fora, lembra a cada X minutos
 SILENCIO_DB = -50.0      # pico abaixo disso = silêncio
 BRT = timezone(timedelta(hours=-3))
@@ -51,9 +55,11 @@ def conferir():
            '-rw_timeout', '15000000', '-reconnect', '0',
            '-i', STREAM_URL, '-t', str(SEGUNDOS), '-vn',
            '-af', 'volumedetect', '-f', 'null', '-']
+    t0 = time.time()
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=SEGUNDOS + 40)
         log = p.stderr
+        gasto = time.time() - t0
     except subprocess.TimeoutExpired:
         return False, 'o streaming não respondeu (tempo esgotado)', {}
     except FileNotFoundError:
@@ -78,9 +84,18 @@ def conferir():
         return False, 'não consegui conectar no streaming' + (f' ({erro[-120:]})' if erro else ''), det
     if det.get('segundos', 0) < SEGUNDOS * 0.6:
         return False, f"o streaming conectou mas o áudio parou (chegaram só {det.get('segundos', 0)}s de {SEGUNDOS}s)", det
+    # picotando: o áudio chega mais devagar que o tempo real (o ouvinte fica parando para carregar)
+    det['espera_s'] = round(gasto, 1)
+    if det.get('segundos') and gasto > det['segundos'] * LENTIDAO + 3:
+        return False, f"o streaming está PICOTANDO (levou {round(gasto)}s para chegar {det['segundos']}s de áudio) — internet da rádio fraca?", det
     if 'pico_db' in det and det['pico_db'] < SILENCIO_DB:
         return False, f"o streaming está no ar, mas só com SILÊNCIO (pico {det['pico_db']} dB) — Playlist parado ou mesa sem sinal?", det
     return True, 'no ar', det
+
+
+def frase(m):
+    m = m[0].upper() + m[1:]
+    return m if m[-1] in '.?!' else m + '.'
 
 
 def telegram(texto):
@@ -123,17 +138,25 @@ def main():
         sys.exit(0 if enviado else 1)
 
     e = ler_estado()
+    for n in range(CONFERENCIAS):
+        if n:
+            time.sleep(INTERVALO_SEG)
+        uma_conferencia(e)
+        gravar_estado(e)
+
+
+def uma_conferencia(e):
     ok, motivo, det = conferir()
     # uma segunda tentativa rápida antes de contar como falha (soluço de rede)
     if not ok:
-        time.sleep(10)
-        ok, motivo2, det2 = conferir()
-        if not ok:
-            motivo, det = motivo2, det2
+        time.sleep(15)
+        ok2, motivo2, det2 = conferir()
+        if ok2:
+            ok, motivo, det = ok2, motivo2, det2
         else:
-            det = det2
+            motivo, det = motivo2, det2
     t = agora()
-    print(t.isoformat(), 'OK' if ok else 'FALHA', motivo, det)
+    print(t.isoformat(), 'OK' if ok else 'FALHA', motivo, det, flush=True)
 
     if ok:
         if e.get('situacao') == 'fora' and e.get('avisado'):
@@ -149,17 +172,16 @@ def main():
         e['motivo'] = motivo
         ini = datetime.fromisoformat(e['desde'])
         if not e.get('avisado') and e['falhas'] >= FALHAS_PARA_AVISAR:
-            if telegram(f'🔴 ALERTA — {NOME} COM PROBLEMA\n{motivo[0].upper() + motivo[1:]}.\nDesde {fmt(ini)} (conferido {e["falhas"]}x).\nLink: {STREAM_URL}'):
+            if telegram(f'🔴 ALERTA — {NOME} COM PROBLEMA\n{frase(motivo)}\nDesde {fmt(ini)}.\nLink: {STREAM_URL}'):
                 e['avisado'] = True
                 e['ultimo_aviso'] = t.isoformat()
         elif e.get('avisado') and e.get('ultimo_aviso'):
             ult = datetime.fromisoformat(e['ultimo_aviso'])
             if (t - ult).total_seconds() >= LEMBRETE_MIN * 60:
-                if telegram(f'🔴 {NOME} continua com problema há {duracao((t - ini).total_seconds())}.\n{motivo[0].upper() + motivo[1:]}.'):
+                if telegram(f'🔴 {NOME} continua com problema há {duracao((t - ini).total_seconds())}.\n{frase(motivo)}'):
                     e['ultimo_aviso'] = t.isoformat()
     e['ultima_conferencia'] = t.isoformat()
     e['ultimo_resultado'] = {'ok': ok, 'motivo': motivo, **{k: (None if v == float('-inf') else v) for k, v in det.items()}}
-    gravar_estado(e)
 
 
 if __name__ == '__main__':
