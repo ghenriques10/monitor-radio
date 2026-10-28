@@ -52,7 +52,7 @@ def conferir():
            '-i', STREAM_URL, '-t', str(SEGUNDOS), '-vn',
            '-af', 'volumedetect', '-f', 'null', '-']
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=SEGUNDOS + 40)
+        p = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=SEGUNDOS + 40)
         log = p.stderr
     except subprocess.TimeoutExpired:
         return False, 'o streaming não respondeu (tempo esgotado)', {}
