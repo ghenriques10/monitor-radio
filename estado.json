@@ -1,18 +1,14 @@
 {
-  "situacao": "ok",
-  "falhas": 0,
-  "desde": null,
-  "ultimo_aviso": null,
-  "avisado": false,
+  "situacao": "fora",
+  "falhas": 2,
+  "desde": "2026-11-20T22:45:44.381459-03:00",
+  "ultimo_aviso": "2026-11-20T22:45:44.381459-03:00",
+  "avisado": true,
   "historico": [],
-  "motivo": null,
-  "ultima_conferencia": "2026-11-20T17:45:40.753317-03:00",
+  "motivo": "não consegui conectar no streaming (Error opening input files: Server returned 404 Not Found)",
+  "ultima_conferencia": "2026-11-20T22:48:31.985945-03:00",
   "ultimo_resultado": {
-    "ok": true,
-    "motivo": "no ar",
-    "segundos": 20.0,
-    "pico_db": -2.0,
-    "media_db": -17.1,
-    "espera_s": 10.5
+    "ok": false,
+    "motivo": "não consegui conectar no streaming (Error opening input files: Server returned 404 Not Found)"
   }
 }
