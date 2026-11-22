@@ -12,13 +12,13 @@
     }
   ],
   "motivo": null,
-  "ultima_conferencia": "2026-11-22T05:53:07.990374-03:00",
+  "ultima_conferencia": "2026-11-22T13:45:53.021505-03:00",
   "ultimo_resultado": {
     "ok": true,
     "motivo": "no ar",
     "segundos": 20.0,
-    "pico_db": -0.8,
-    "media_db": -14.3,
-    "espera_s": 10.7
+    "pico_db": -1.0,
+    "media_db": -14.6,
+    "espera_s": 10.2
   }
 }
